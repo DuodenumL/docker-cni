@@ -9,15 +9,19 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/containernetworking/cni/libcni"
+	"github.com/containernetworking/cni/pkg/types"
 )
 
 // Protocol parameters are passed to the plugins via OS environment variables.
 const (
-	CmdAdd   = "add"
-	CmdCheck = "check"
-	CmdDel   = "del"
+	CmdAdd              = "add"
+	CmdCheck            = "check"
+	CmdDel              = "del"
+	CniAddMaxRetryTimes = 5
+	CniAddRetryInterval = 5 * time.Second
 )
 
 // CNIToolConfig .
@@ -131,6 +135,22 @@ func LoadConfList(dir string, handler func([]byte) ([]byte, error)) (*libcni.Net
 	return libcni.ConfListFromConf(singleConf)
 }
 
+func AddNetworkListWithRetry(ctx context.Context, cniNet *libcni.CNIConfig, netconf *libcni.NetworkConfigList, rt *libcni.RuntimeConf) error {
+	var result types.Result
+	var err error
+	for i := 0; i < CniAddMaxRetryTimes; i++ {
+		result, err = cniNet.AddNetworkList(ctx, netconf, rt)
+		if result != nil {
+			_ = result.Print()
+		}
+		if err == nil {
+			return nil
+		}
+		time.Sleep(CniAddRetryInterval)
+	}
+	return err
+}
+
 // Run .
 func Run(config CNIToolConfig) error {
 	netconf, err := LoadConfList(config.NetConfPath, config.Handler)
@@ -165,11 +185,7 @@ func Run(config CNIToolConfig) error {
 
 	switch config.Cmd {
 	case CmdAdd:
-		result, err := cninet.AddNetworkList(context.TODO(), netconf, rt)
-		if result != nil {
-			_ = result.Print()
-		}
-		return err
+		return AddNetworkListWithRetry(context.Background(), cninet, netconf, rt)
 	case CmdCheck:
 		return cninet.CheckNetworkList(context.TODO(), netconf, rt)
 	case CmdDel:
